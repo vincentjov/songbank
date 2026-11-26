@@ -27,7 +27,20 @@ export function createStorage(config, publish) {
   let connection;
   let pendingSave = false;
   let edits = [];
-  publish({ status: 'connecting', edits });
+  let status = 'connecting';
+  let editing = false;
+
+  function update(nextStatus = status) {
+    status = nextStatus;
+    publish({ status, edits, editing });
+  }
+
+  function updateEditor(user) {
+    editing = Boolean(user?.email && user.email.toLowerCase() === editorEmail.toLowerCase());
+    update();
+  }
+
+  update();
 
   void (async () => {
     try {
@@ -37,30 +50,48 @@ export function createStorage(config, publish) {
         import(cdn + 'firebase-firestore.js'),
       ]);
       const app = initializeApp(firebase);
-      const authentication = auth.initializeAuth(app, { persistence: auth.inMemoryPersistence });
+      const authentication = auth.initializeAuth(app, { persistence: auth.browserSessionPersistence });
       const database = db.getFirestore(app);
       connection = { auth, db, authentication, database };
+      auth.onAuthStateChanged(authentication, updateEditor);
 
       db.onSnapshot(db.collection(database, 'songbankSongs'), { includeMetadataChanges: true }, snapshot => {
         if (snapshot.metadata.hasPendingWrites) return;
         edits = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        publish({ status: snapshot.metadata.fromCache ? 'connecting' : 'connected', edits });
-      }, () => publish({ status: 'error', edits }));
+        update(snapshot.metadata.fromCache ? 'connecting' : 'connected');
+      }, () => update('error'));
     } catch {
-      publish({ status: 'error', edits });
+      update('error');
     }
   })();
 
   return {
-    async save({ id, sourceTitle, sourceArtist, manual }, fields, password, create) {
+    async unlock(password) {
+      if (!connection) throw new Error('Team storage is still connecting.');
+      const { auth, authentication } = connection;
+      try {
+        const { user } = await auth.signInWithEmailAndPassword(authentication, editorEmail, password);
+        updateEditor(user);
+      } catch (error) {
+        const invalid = ['auth/invalid-credential', 'auth/wrong-password', 'auth/invalid-login-credentials'];
+        if (invalid.includes(error.code)) throw new Error('The editor password was not accepted.');
+        if (error.code === 'auth/too-many-requests') throw new Error('Too many attempts. Try again later.');
+        throw new Error('Could not unlock editing. Check your connection and Firebase Authentication.');
+      }
+    },
+    async lock() {
+      if (pendingSave) throw new Error('Wait for the current save to finish.');
+      const { auth, authentication } = connection;
+      await auth.signOut(authentication);
+      updateEditor(null);
+    },
+    async save({ id, sourceTitle, sourceArtist, manual }, fields, create) {
+      if (!editing) throw new Error('Unlock editing before saving.');
       if (!connection) throw new Error('Firebase is still connecting. Try again shortly.');
       if (pendingSave) throw new Error('A save is already in progress.');
       pendingSave = true;
-      const { auth, db, authentication, database } = connection;
-      let authenticated = false;
+      const { db, database } = connection;
       try {
-        await auth.signInWithEmailAndPassword(authentication, editorEmail, password);
-        authenticated = true;
         const ref = db.doc(database, 'songbankSongs', id);
         const record = { sourceTitle, sourceArtist: sourceArtist.slice(0, 160), manual, ...fields, updatedAt: db.serverTimestamp() };
 
@@ -84,11 +115,7 @@ export function createStorage(config, publish) {
         if (!error.code) throw error;
         throw new Error('The song could not be saved. Try again shortly.', { cause: error });
       } finally {
-        try {
-          if (authenticated) await auth.signOut(authentication);
-        } finally {
-          pendingSave = false;
-        }
+        pendingSave = false;
       }
     },
   };
