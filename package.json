@@ -1,0 +1,8 @@
+{
+  "name": "worship-songbank",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "refresh-sheet": "node scripts/refresh-sheet.mjs"
+  }
+}

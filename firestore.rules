@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isEditor() {
+      return request.auth != null
+        && request.auth.uid == get(/databases/$(database)/documents/songbankSettings/editor).data.uid;
+    }
+
+    function optionalText(data, key, limit) {
+      let value = data.get(key, null);
+      return value == null || (value is string && value.size() <= limit);
+    }
+
+    function validSong() {
+      let song = request.resource.data;
+      let youtube = song.get('youtube', null);
+      return song.keys().hasAll(['sourceTitle', 'sourceArtist', 'manual', 'updatedAt'])
+        && song.keys().hasOnly(['sourceTitle', 'sourceArtist', 'manual', 'updatedAt',
+          'title', 'artist', 'tempo', 'group', 'youtube'])
+        && song.sourceTitle is string && song.sourceTitle.size() > 0 && song.sourceTitle.size() <= 200
+        && song.sourceArtist is string && song.sourceArtist.size() <= 160
+        && song.manual is bool
+        && optionalText(song, 'title', 200) && song.get('title', null) != ''
+        && optionalText(song, 'artist', 160)
+        && song.get('tempo', '') in ['', 'upbeat', 'slowbeat']
+        && song.get('group', 'auto') in ['auto', 'gms', 'non-gms']
+        && (youtube in [null, ''] || (youtube is string
+          && youtube.matches('https://www[.]youtube[.]com/watch[?]v=[A-Za-z0-9_-]{11}')))
+        && song.updatedAt == request.time;
+    }
+
+    match /songbankSongs/{songId} {
+      allow read: if true;
+      allow create, update: if isEditor() && validSong();
+    }
+  }
+}

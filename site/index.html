@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8fa">
+  <meta name="description" content="Find worship songs, see what your team played, and check upcoming weekly setlists.">
+  <title>Worship Song Bank · GMS Europe</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+  <script type="module" src="./assets/app.js"></script>
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#overview" id="team-name">GMS Europe</a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="#overview" aria-current="location">Overview</a>
+        <a href="#song-bank">Song bank</a>
+      </nav>
+      <div class="topbar-actions">
+        <button type="button" class="button button-quiet" data-action="sync-panel" id="sync-open">
+          <span data-icon="sync" aria-hidden="true"></span><span>Sheet sync</span>
+        </button>
+        <button type="button" class="button button-primary" data-action="add" id="add-song">
+          <span data-icon="plus" aria-hidden="true"></span><span>Add song</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+    <section id="overview" class="overview" aria-labelledby="page-title">
+      <div class="page-heading">
+        <h1 id="page-title">Worship Song Bank</h1>
+        <p>Your team’s repertoire and upcoming setlists.</p>
+      </div>
+
+      <div class="weekly-grid" id="weekly-grid" aria-label="Weekly setlists">
+        <section class="set-card"><h2>This week</h2><p>Loading setlist…</p></section>
+        <section class="set-card"><h2>Next week</h2><p>Loading setlist…</p></section>
+      </div>
+    </section>
+
+    <section id="song-bank" class="bank" aria-labelledby="bank-title">
+      <div class="bank-heading">
+        <h2 id="bank-title" tabindex="-1">Song bank</h2>
+        <span class="bank-count" id="bank-count"></span>
+      </div>
+      <div class="bank-panel">
+        <div class="bank-controls">
+          <label class="search-control">
+            <span class="sr-only">Search by song title or artist</span>
+            <span data-icon="search" aria-hidden="true"></span>
+            <input id="search" type="search" placeholder="Search title or artist" autocomplete="off">
+          </label>
+          <button type="button" id="filter-toggle" class="button button-outline" data-action="filters" aria-expanded="true" aria-controls="filter-panel">
+            <span data-icon="filters" aria-hidden="true"></span>
+            <span>Filters</span>
+            <span id="filter-count" class="filter-count" hidden></span>
+          </button>
+          <label class="sort-control">
+            <span class="sr-only">Sort song bank</span>
+            <select id="sort" class="select">
+              <option value="recent">Recently played</option>
+              <option value="oldest">Longest since played</option>
+              <option value="title">Title A–Z</option>
+            </select>
+          </label>
+        </div>
+        <div id="filter-panel" class="filter-panel">
+          <div id="filter-panel-inner">
+            <div class="filter-grid">
+              <label>Tempo
+                <select id="tempo-filter" class="select">
+                  <option value="">All tempos</option>
+                  <option value="upbeat">Upbeat</option>
+                  <option value="slowbeat">Slowbeat</option>
+                  <option value="untagged">Unclassified</option>
+                </select>
+              </label>
+              <label>Origin
+                <select id="group-filter" class="select">
+                  <option value="">All origins</option>
+                  <option value="gms">GMS</option>
+                  <option value="non-gms">Non GMS</option>
+                  <option value="unknown">Unclassified</option>
+                </select>
+              </label>
+              <label>Played status
+                <select id="history-filter" class="select">
+                  <option value="">All songs</option>
+                  <option value="played">Ever played</option>
+                  <option value="new">New song</option>
+                </select>
+              </label>
+              <label>Last played
+                <select id="age-filter" class="select">
+                  <option value="">Any date</option>
+                  <option value="older">2 months ago or earlier</option>
+                </select>
+              </label>
+            </div>
+            <button type="button" id="clear-filters" data-action="clear-filters" class="text-button clear-filters" hidden>Clear filters</button>
+          </div>
+        </div>
+
+        <ul class="song-table" id="song-table" aria-label="Songs">
+          <li class="song-table-heading" aria-hidden="true">
+            <span>Song</span><span>Tempo</span><span>Origin</span><span>Last played</span><span>YouTube</span>
+          </li>
+        </ul>
+        <div class="bank-empty" id="bank-empty"><p>Loading songs…</p></div>
+        <div class="pagination" id="pagination" hidden></div>
+      </div>
+      <p class="sr-only" aria-live="polite" id="results-status"></p>
+    </section>
+
+    <noscript><p>Enable JavaScript to open the song bank.</p></noscript>
+
+    <footer class="footer">
+      <span>GMS Europe worship team</span>
+      <button type="button" class="text-button storage-button" data-action="team-panel" id="team-open">
+        <span data-icon="storage" aria-hidden="true"></span>
+        <span id="storage-status">Team storage</span>
+      </button>
+    </footer>
+  </main>
+
+  <dialog id="drawer" class="drawer" aria-labelledby="drawer-title">
+    <div id="drawer-content" class="drawer-content"></div>
+  </dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
