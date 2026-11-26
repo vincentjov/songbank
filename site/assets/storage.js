@@ -62,7 +62,7 @@ export function createStorage(config, publish) {
         await auth.signInWithEmailAndPassword(authentication, editorEmail, password);
         authenticated = true;
         const ref = db.doc(database, 'songbankSongs', id);
-        const record = { sourceTitle, sourceArtist, manual, ...fields, updatedAt: db.serverTimestamp() };
+        const record = { sourceTitle, sourceArtist: sourceArtist.slice(0, 160), manual, ...fields, updatedAt: db.serverTimestamp() };
 
         await db.runTransaction(database, async transaction => {
           const existing = await transaction.get(ref);

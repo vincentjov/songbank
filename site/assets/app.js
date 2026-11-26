@@ -1,5 +1,5 @@
 import { config } from '../config.js';
-import { buildCatalog, filterCatalog, foldText, songId, todayInZone, weekWindows } from './catalog.js';
+import { buildCatalog, filterCatalog, findSongId, foldText, songId, todayInZone, weekWindows } from './catalog.js';
 import { fetchSpreadsheet, validateSnapshot, youtubeVideo } from './sheets.js';
 import { createStorage, readCache, writeCache } from './storage.js';
 
@@ -88,14 +88,14 @@ function renderWeeks() {
       ${dated.map(({ date, tracks }) => `
         <div class="set-service">
           <h3>${when(date, dateLong)}</h3>
-          ${tracks.length ? `<ol class="set-tracks">${tracks.map(({ id, youtube }, i) => {
+          ${tracks.length ? `<ol class="set-tracks">${tracks.map(({ id, artist, youtube }, i) => {
             const song = model.catalog.get(id);
             const link = song.changes?.youtube ?? (youtube || song.youtube);
             return `<li class="set-track">
               <span class="track-order" aria-hidden="true">${i + 1}</span>
               <button type="button" class="song-title-button" data-action="details" data-id="${escapeHtml(id)}">
                 <span class="track-title">${escapeHtml(song.title)}</span>
-                ${song.artist ? `<span class="track-artist">${escapeHtml(song.artist)}</span>` : ''}
+                ${(artist || song.artist) ? `<span class="track-artist">${escapeHtml(artist || song.artist)}</span>` : ''}
               </button>
               ${link ? mediaLink({ ...song, youtube: link }) : ''}
             </li>`;
@@ -373,10 +373,10 @@ async function saveSong(form) {
   if (!foldText(title)) return fail('Enter a song title with at least one letter or number.');
   if (rawLink && !youtube) return fail('Enter a YouTube video link.');
   const original = drawerState.song;
-  const id = original?.id ?? songId(title, artist);
+  const id = original?.id ?? findSongId(title, model.catalog) ?? songId(title);
   if (!original && (model.catalog.has(id) ||
       (!artist && [...model.catalog.values()].some(song => foldText(song.title) === foldText(title))))) {
-    return fail('A song with this title is already in the bank. Add an artist to distinguish another version, or edit the existing song.');
+    return fail('This song is already in the bank. Edit it to change the credits or other details.');
   }
 
   const fields = {};

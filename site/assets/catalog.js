@@ -16,8 +16,8 @@ function artistKey(value) {
   return ARTIST_ALIASES.get(key) ?? key;
 }
 
-export function songId(title, artist) {
-  return foldText(title) + '~' + artistKey(artist);
+export function songId(title) {
+  return foldText(title);
 }
 
 function inferGroup(artist) {
@@ -60,76 +60,152 @@ export function twoMonthsBefore(today) {
   return asIso(date);
 }
 
-export function buildCatalog(snapshot, edits, today) {
-  const catalog = new Map();
-  const credits = new Map();
-  const setlists = snapshot?.setlists ?? [];
+function oneEditApart(a, b) {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  if (a.length > b.length) [a, b] = [b, a];
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i += 1;
+  if (a.length !== b.length) return a.slice(i) === b.slice(i + 1);
+  return a.slice(i + 1) === b.slice(i + 1) ||
+    (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+}
 
-  function noteCredit(title, artist) {
-    if (!artistKey(artist)) return;
-    const key = foldText(title);
-    if (!credits.has(key)) credits.set(key, new Set());
-    credits.get(key).add(songId(title, artist));
+function isTitleTypo(a, b) {
+  if (Math.min(a.length, b.length) < 8 || a === b) return false;
+  if (a.replaceAll(' ', '') === b.replaceAll(' ', '')) return true;
+
+  const words = a.split(' ');
+  const other = b.split(' ');
+  if (words.length !== other.length) return false;
+
+  const differences = words.map((word, index) => index)
+    .filter(index => words[index] !== other[index]);
+  if (differences.length !== 1) return false;
+
+  const i = differences[0];
+  const shorter = Math.min(words[i].length, other[i].length);
+  const sameLength = words[i].length === other[i].length;
+  const minimum = words.length === 1 ? 8 : sameLength ? 5 : 4;
+  return shorter >= minimum && oneEditApart(words[i], other[i]);
+}
+
+export function findSongId(title, catalog) {
+  const key = songId(title);
+  const candidates = [...catalog.values()];
+  const exact = candidates.find(song => song.titleKeys.has(key) || songId(song.title) === key);
+  if (exact) return exact.id;
+  const similar = candidates.filter(song => isTitleTypo(song.id, key));
+  return similar.length === 1 ? similar[0].id : undefined;
+}
+
+function combineArtists(credits) {
+  const names = credits.flatMap(credit =>
+    credit.split(/\s*[,;]\s*|\s+(?:\/|\+|feat\.?|ft\.?|featuring)\s+/i));
+  const keyOf = name => artistKey(name).replace(/^maverick city music$/, 'maverick city');
+  const preferred = new Map([
+    ['maverick city', 'Maverick City'],
+    ['elevation worship', 'Elevation Worship'],
+  ]);
+  const known = new Set([...preferred.keys(), ...names.map(keyOf)]);
+  const entries = new Map();
+
+  for (const name of names.flatMap(name => {
+    const parts = name.split(/\s+(?:&|and)\s+/i);
+    return parts.every(part => known.has(keyOf(part))) ? parts : [name];
+  })) {
+    const key = keyOf(name);
+    if (!key || entries.has(key)) continue;
+    const nearby = [...entries.keys()].find(other =>
+      Math.min(other.length, key.length) >= 8 && oneEditApart(other, key));
+    if (!nearby || preferred.has(key)) {
+      entries.set(nearby ?? key, preferred.get(key) ?? name.trim());
+    }
+  }
+
+  return [...entries.values()].join(', ');
+}
+
+export function buildCatalog(snapshot, edits, today) {
+  const setlists = snapshot?.setlists ?? [];
+  const titles = new Map();
+  const catalog = new Map();
+  const byTitle = new Map();
+
+  function recordTitle(title, playCount) {
+    const key = songId(title);
+    if (!titles.has(key)) titles.set(key, { title, playCount: 0 });
+    titles.get(key).playCount += playCount;
   }
 
   for (const { tracks } of setlists) {
-    for (const track of tracks) noteCredit(track.title, track.artist);
+    for (const track of tracks) recordTitle(track.title, 1);
   }
-  for (const edit of edits) noteCredit(edit.sourceTitle, edit.sourceArtist);
+  for (const edit of edits) recordTitle(edit.sourceTitle, 0);
 
-  function identify(title, artist) {
-    const candidates = credits.get(foldText(title));
-    if (!artistKey(artist) && candidates?.size === 1) return [...candidates][0];
-    return songId(title, artist);
+  const variants = [...titles].sort(([keyA, a], [keyB, b]) =>
+    b.playCount - a.playCount || keyB.length - keyA.length || keyA.localeCompare(keyB));
+  for (const [key, { title }] of variants) {
+    const candidates = [...catalog.values()].filter(song => isTitleTypo(song.id, key));
+    const song = candidates.length === 1 ? candidates[0] : {
+      id: key, sourceTitle: title, sourceYoutube: '', titleKeys: new Set(),
+      dates: new Set(), credits: [], changes: {}, manual: false,
+    };
+    catalog.set(song.id, song);
+    song.titleKeys.add(key);
+    byTitle.set(key, song);
   }
 
-  function baseSong(id, title, artist) {
-    if (!catalog.has(id)) {
-      catalog.set(id, { id, sourceTitle: title, sourceArtist: artist, sourceYoutube: '', dates: new Set(), manual: false });
+  const timestamp = edit => edit.updatedAt?.toMillis?.() ?? 0;
+  const orderedEdits = [...edits].sort((a, b) =>
+    timestamp(a) - timestamp(b) || a.id.localeCompare(b.id));
+  const legacyKey = (title, artist) => songId(title) + '~' + artistKey(artist);
+  const legacyArtistEdits = new Map();
+  for (const edit of orderedEdits) {
+    if (edit.id.includes('~') && Object.hasOwn(edit, 'artist')) {
+      legacyArtistEdits.set(legacyKey(edit.sourceTitle, edit.sourceArtist), edit.artist);
     }
-    return catalog.get(id);
   }
 
   const weeks = setlists.map(({ date, tracks }) => ({
     date,
     tracks: tracks.map(track => {
-      const id = identify(track.title, track.artist);
-      const song = baseSong(id, track.title, track.artist);
-      if (track.artist) song.sourceArtist = track.artist;
-      if (track.youtube) song.sourceYoutube = track.youtube;
+      const song = byTitle.get(songId(track.title));
+      const artist = legacyArtistEdits.get(legacyKey(track.title, track.artist)) ?? track.artist;
       song.dates.add(date);
-      return { id, youtube: track.youtube };
+      song.credits.push(artist);
+      if (track.youtube) song.sourceYoutube = track.youtube;
+      return { id: song.id, artist, youtube: track.youtube };
     }),
   }));
 
-  const exactEdits = [];
-  for (const edit of edits) {
-    const id = edit.manual ? edit.id : identify(edit.sourceTitle, edit.sourceArtist);
-    const song = baseSong(id, edit.sourceTitle, edit.sourceArtist);
-    if (id === edit.id) {
-      exactEdits.push([song, edit]);
-    } else {
-      song.changes = { ...song.changes, ...edit };
+  for (const edit of orderedEdits) {
+    const song = byTitle.get(songId(edit.sourceTitle));
+    const legacy = edit.id.includes('~');
+    if (legacy || edit.manual || !song.dates.size) {
+      song.credits.push((legacy ? edit.artist : null) ?? edit.sourceArtist);
     }
-  }
-  for (const [song, edit] of exactEdits) {
-    song.changes = { ...song.changes, ...edit };
-    song.manual = edit.manual;
+    if (edit.manual && !song.dates.size) song.manual = true;
+    for (const field of ['title', 'artist', 'tempo', 'group', 'youtube']) {
+      if ((field !== 'artist' || !legacy) && Object.hasOwn(edit, field)) {
+        song.changes[field] = edit[field];
+      }
+    }
   }
 
   for (const song of catalog.values()) {
-    const editsForSong = song.changes ?? {};
     const dates = [...song.dates].sort();
     song.pastDates = dates.filter(date => date <= today).reverse();
     song.upcomingDates = dates.filter(date => date > today);
     song.lastPlayed = song.pastDates[0] ?? '';
-    song.title = editsForSong.title ?? song.sourceTitle;
-    song.artist = editsForSong.artist ?? song.sourceArtist;
-    song.tempo = editsForSong.tempo ?? '';
-    song.groupChoice = editsForSong.group ?? 'auto';
+    song.sourceArtist = combineArtists(song.credits);
+    song.title = song.changes.title ?? song.sourceTitle;
+    song.artist = song.changes.artist ?? song.sourceArtist;
+    song.tempo = song.changes.tempo ?? '';
+    song.groupChoice = song.changes.group ?? 'auto';
     song.group = song.groupChoice === 'auto' ? inferGroup(song.artist) : song.groupChoice;
-    song.youtube = editsForSong.youtube ?? song.sourceYoutube;
+    song.youtube = song.changes.youtube ?? song.sourceYoutube;
   }
+
   return { catalog, weeks };
 }
 
@@ -137,7 +213,7 @@ export function filterCatalog(catalog, filters, today) {
   const terms = foldText(filters.query).split(' ').filter(Boolean);
   const cutoff = twoMonthsBefore(today);
   const result = [...catalog.values()].filter(song => {
-    const searchable = foldText([song.title, song.artist, song.sourceTitle, song.sourceArtist].join(' '));
+    const searchable = foldText([song.title, song.artist, song.sourceTitle, song.sourceArtist, ...song.titleKeys].join(' '));
     return terms.every(term => searchable.includes(term)) &&
       (!filters.tempo || (song.tempo || 'untagged') === filters.tempo) &&
       (!filters.group || song.group === filters.group) &&
