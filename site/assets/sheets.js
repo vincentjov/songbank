@@ -158,8 +158,8 @@ export async function fetchSpreadsheet(config, fetcher = fetch) {
   }));
 
   const setlists = parseYearTabs(csvFiles);
-  if (!setlists.some(set => set.tracks.length)) {
-    throw new Error('No dated songs were found in the published year tabs.');
+  if (!setlists.length) {
+    throw new Error('No dated setlists were found in the published year tabs.');
   }
   return validateSnapshot({ version: 1, fetchedAt: new Date().toISOString(), setlists });
 }

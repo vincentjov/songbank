@@ -65,7 +65,8 @@
     import { config } from './config.js';
     import { todayInZone } from './assets/catalog.js';
     import { fetchSpreadsheet, validateSnapshot, youtubeVideo } from './assets/sheets.js';
-    import { readCache, writeCache } from './assets/storage.js';
+    import { tracksFromSnapshot } from './assets/song-catalog.js';
+    import { cacheSheet, readCache } from './assets/storage.js';
 
     const $ = selector => document.querySelector(selector);
     const dateAt = date => new Date(date + 'T00:00:00Z');
@@ -162,8 +163,8 @@
       button.textContent = 'Refreshing...';
       try {
         const latest = await fetchSpreadsheet(config);
+        cacheSheet(latest, tracksFromSnapshot(snapshot));
         show(latest);
-        writeCache('sheet', latest);
       } catch {
         status.textContent = snapshot ? 'Google Sheets could not be reached. Showing the last import.' :
           'Google Sheets could not be reached. Try refreshing again.';

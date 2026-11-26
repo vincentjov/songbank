@@ -3,17 +3,17 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '23 4 * * 1'
+    - cron: '23 4 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/configure-pages@v5
+        id: pages
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -32,9 +33,38 @@ jobs:
           path: site/data/psalmnote.json
           key: psalmnote-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: psalmnote-v1-
+      - name: Restore remembered songs
+        id: song-catalog
+        run: |
+          ref=refs/heads/songbank-catalog
+          remote=$(git ls-remote origin "$ref")
+          if [ -n "$remote" ]; then
+            git fetch --depth=1 origin "$ref"
+            parent=$(git rev-parse FETCH_HEAD)
+            git show "$parent:song-catalog.json" > site/data/song-catalog.json
+            echo "parent=$parent" >> "$GITHUB_OUTPUT"
+          fi
       - name: Refresh spreadsheet snapshot
+        env:
+          SONGBANK_PUBLISHED_SNAPSHOT: ${{ steps.pages.outputs.base_url }}/data/songlists.json
         run: node scripts/refresh-sheet.mjs
         continue-on-error: true
+      - name: Save remembered songs
+        env:
+          CATALOG_PARENT: ${{ steps.song-catalog.outputs.parent }}
+        run: |
+          blob=$(git hash-object -w site/data/song-catalog.json)
+          tree=$(printf '100644 blob %s\tsong-catalog.json\n' "$blob" | git mktree)
+          parents=()
+          if [ -n "$CATALOG_PARENT" ]; then
+            if [ "$tree" = "$(git rev-parse "$CATALOG_PARENT^{tree}")" ]; then
+              exit 0
+            fi
+            parents=(-p "$CATALOG_PARENT")
+          fi
+          commit=$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "$tree" "${parents[@]}" -m 'Remember imported songs')
+          git push origin "$commit:refs/heads/songbank-catalog"
       - name: Look up Psalmnote song types
         run: |
           npm install --no-save --package-lock=false cheerio@1.1.2 robots-parser@3.0.1

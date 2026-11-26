@@ -5,7 +5,8 @@ let psalmnoteEntries = {};
 import { config } from '../config.js';
 import { buildCatalog, filterCatalog, findSongId, foldText, songId, todayInZone, weekWindows } from './catalog.js';
 import { fetchSpreadsheet, validateSnapshot, youtubeVideo } from './sheets.js';
-import { createStorage, readCache, writeCache } from './storage.js';
+import { tracksFromSnapshot } from './song-catalog.js';
+import { cacheSheet, createStorage, readCache, rememberSongs, writeCache } from './storage.js';
 
 const $ = selector => document.querySelector(selector);
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, char => ({
@@ -46,7 +47,8 @@ let syncing = false;
 let autoSync = readCache('auto-sync', true) !== false;
 let lastAttempt = 0;
 let today = todayInZone(config.timeZone);
-let model = buildCatalog(snapshot, [], today);
+let remembered = rememberSongs(tracksFromSnapshot(snapshot));
+let model = buildCatalog(snapshot, [], today, remembered);
 let storageState = { status: 'connecting', edits: [] };
 let page = 1;
 let drawerState = null;
@@ -165,19 +167,28 @@ function renderBank() {
 }
 
 function refreshModel() {
-  model = buildCatalog(snapshot, storageState.edits, today);
+  model = buildCatalog(snapshot, storageState.edits, today, remembered);
   applyPsalmnoteTempos(model.catalog, psalmnoteEntries);
   renderWeeks();
   renderBank();
 }
 
 function applySnapshot(value) {
+  const nextRemembered = cacheSheet(value, remembered);
   const changed = JSON.stringify(snapshot?.setlists) !== JSON.stringify(value.setlists);
+  const catalogChanged = JSON.stringify(remembered) !== JSON.stringify(nextRemembered);
+  remembered = nextRemembered;
   snapshot = value;
   loading = false;
-  writeCache('sheet', value);
-  if (changed) refreshModel();
+  if (changed || catalogChanged) refreshModel();
   updateSyncPanel();
+}
+
+function appendRemembered(tracks) {
+  const updated = rememberSongs(remembered, tracks);
+  if (JSON.stringify(updated) === JSON.stringify(remembered)) return;
+  remembered = updated;
+  refreshModel();
 }
 
 function updateSyncPanel() {
@@ -555,6 +566,7 @@ void fetch(new URL('../data/songlists.json', import.meta.url))
   .then(validateSnapshot)
   .then(initial => {
     if (!snapshot || Date.parse(initial.fetchedAt) > Date.parse(snapshot.fetchedAt)) applySnapshot(initial);
+    else appendRemembered(tracksFromSnapshot(initial));
   })
   .catch(() => {
     if (!snapshot) {
@@ -565,6 +577,11 @@ void fetch(new URL('../data/songlists.json', import.meta.url))
 void syncSheet();
 window.setInterval(checkDateAndSync, 60_000);
 document.addEventListener('visibilitychange', checkDateAndSync);
+
+void fetch(new URL('../data/song-catalog.json', import.meta.url))
+  .then(response => response.ok ? response.json() : [])
+  .then(appendRemembered)
+  .catch(() => {});
 
 void fetch(new URL('../data/psalmnote.json', import.meta.url))
   .then(response => response.ok ? response.json() : {})

@@ -1,3 +1,5 @@
+import { mergeSongCatalog, tracksFromSnapshot } from './song-catalog.js';
+
 const prefix = 'worship-songbank:' + new URL('../', import.meta.url).pathname + ':';
 
 export function readCache(name, fallback) {
@@ -14,6 +16,19 @@ export function writeCache(name, value) {
   } catch {
     // A denied or full browser cache should not stop spreadsheet browsing.
   }
+}
+
+export function rememberSongs(...collections) {
+  const saved = readCache('song-catalog', []);
+  const merged = mergeSongCatalog(saved, ...collections);
+  if (JSON.stringify(saved) !== JSON.stringify(merged)) writeCache('song-catalog', merged);
+  return merged;
+}
+
+export function cacheSheet(snapshot, remembered) {
+  const tracks = rememberSongs(remembered, tracksFromSnapshot(readCache('sheet', null)), tracksFromSnapshot(snapshot));
+  writeCache('sheet', snapshot);
+  return tracks;
 }
 
 export function createStorage(config, publish) {

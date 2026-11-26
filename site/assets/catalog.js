@@ -125,7 +125,7 @@ function combineArtists(credits) {
   return [...entries.values()].join(', ');
 }
 
-export function buildCatalog(snapshot, edits, today) {
+export function buildCatalog(snapshot, edits, today, remembered = []) {
   const setlists = snapshot?.setlists ?? [];
   const titles = new Map();
   const catalog = new Map();
@@ -140,6 +140,7 @@ export function buildCatalog(snapshot, edits, today) {
   for (const { tracks } of setlists) {
     for (const track of tracks) recordTitle(track.title, 1);
   }
+  for (const track of remembered) recordTitle(track.title, 0);
   for (const edit of edits) recordTitle(edit.sourceTitle, 0);
 
   const variants = [...titles].sort(([keyA, a], [keyB, b]) =>
@@ -164,6 +165,12 @@ export function buildCatalog(snapshot, edits, today) {
     if (edit.id.includes('~') && Object.hasOwn(edit, 'artist')) {
       legacyArtistEdits.set(legacyKey(edit.sourceTitle, edit.sourceArtist), edit.artist);
     }
+  }
+
+  for (const track of remembered) {
+    const song = byTitle.get(songId(track.title));
+    song.credits.push(legacyArtistEdits.get(legacyKey(track.title, track.artist)) ?? track.artist);
+    if (!song.sourceYoutube && track.youtube) song.sourceYoutube = track.youtube;
   }
 
   const weeks = setlists.map(({ date, tracks }) => ({
