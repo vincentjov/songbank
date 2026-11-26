@@ -99,7 +99,7 @@ export function parseYearTabs(csvFiles) {
       for (const { col, date, hasLinks } of blocks) {
         if (!/^\d{1,2}\s*[.)]?$/.test(row[col - 1] ?? '')) continue;
         const track = parseTrack(row[col] ?? '', hasLinks ? row[col + 1] ?? '' : '');
-        if (track) setlists.get(date).tracks.push(track);
+        if (track) setlists.get(date).tracks.push({ ...track, number: Number.parseInt(row[col - 1], 10) });
       }
     }
   }

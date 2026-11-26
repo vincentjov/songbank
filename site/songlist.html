@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Songlist · GMS Europe</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+  <style>
+    .sheet-toolbar { display:flex; gap:12px 18px; flex-wrap:wrap; align-items:end; justify-content:space-between; margin-bottom:14px }
+    .sheet-toolbar label { display:grid; gap:4px; color:var(--muted); font-size:.9rem; font-weight:650 }
+    .sheet-table { width:100%; margin:0 0 16px; border:1px solid var(--line); border-radius:16px; border-spacing:0; table-layout:fixed; overflow:hidden; background:var(--white) }
+    .sheet-table th,.sheet-table td { text-align:left; vertical-align:top; padding:10px 14px; overflow-wrap:anywhere }
+    .sheet-table th:first-child { width:3.15rem }
+    .sheet-table thead { background:var(--soft) }
+    .sheet-table tbody tr>* { border-top:1px solid var(--line-soft) }
+    .sheet-table tr>*+* { border-left:1px solid var(--line-soft) }
+    .sheet-table tbody th,.sheet-muted { color:var(--muted); font-size:.89rem }
+    .sheet-song+.sheet-song { margin-top:7px; padding-top:7px; border-top:1px solid var(--line-soft) }
+    .sheet-song strong { display:block }
+    .sheet-song a { color:var(--accent) }
+    #sheet-status { margin-bottom:14px }
+    #month-title { margin-bottom:12px; font-size:1.5rem; letter-spacing:-.03em }
+    @media (max-width:610px) {
+      .sheet-table th,.sheet-table td { padding:9px 8px }
+      .sheet-table th:first-child { width:2.3rem }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="./">GMS Europe</a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="./">Overview</a>
+        <a href="./#song-bank">Song bank</a>
+        <a href="./songlist.html" aria-current="location">Songlist</a>
+      </nav>
+      <div class="topbar-actions">
+        <a class="button button-quiet" id="sheet-source" target="_blank" rel="noopener noreferrer">Open Google Sheet</a>
+      </div>
+    </div>
+  </header>
+  <main class="container" id="main">
+    <div class="page-heading"><h1>Songlist</h1></div>
+    <div class="sheet-toolbar">
+      <label for="period">Month
+        <select class="select" id="period" disabled></select>
+      </label>
+      <button class="button button-outline" id="refresh" type="button">Refresh from Sheets</button>
+    </div>
+    <p class="sheet-muted" id="sheet-status" role="status">Loading songlists...</p>
+    <section aria-labelledby="month-title">
+      <h2 id="month-title" hidden></h2>
+      <div id="sheet-tables"></div>
+    </section>
+  </main>
+  <script type="module">
+    import { config } from './config.js';
+    import { todayInZone } from './assets/catalog.js';
+    import { fetchSpreadsheet, validateSnapshot, youtubeVideo } from './assets/sheets.js';
+    import { readCache, writeCache } from './assets/storage.js';
+
+    const $ = selector => document.querySelector(selector);
+    const dateAt = date => new Date(date + 'T00:00:00Z');
+    const monthName = new Intl.DateTimeFormat('en-GB', { month:'long', year:'numeric', timeZone:'UTC' });
+    const shortDate = new Intl.DateTimeFormat('en-GB', {
+      weekday:'short', day:'numeric', month:'short', year:'numeric', timeZone:'UTC',
+    });
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char =>
+      ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
+
+    const period = $('#period');
+    const status = $('#sheet-status');
+    $('#sheet-source').href = config.publishedSheet;
+    let snapshot;
+    let busy = false;
+    let checkedAt = 0;
+
+    function numberedRows(tracks) {
+      const rows = new Map();
+      tracks.forEach((track, index) => {
+        const number = Number.isInteger(track.number) && track.number > 0 && track.number <= 99 ?
+          track.number : index + 1;
+        if (!rows.has(number)) rows.set(number, []);
+        rows.get(number).push(track);
+      });
+      return rows;
+    }
+
+    function songCell(track) {
+      const url = youtubeVideo(track.youtube);
+      return '<div class="sheet-song"><strong>' + escapeHtml(track.title) + '</strong>' +
+        (track.artist ? '<span class="sheet-muted">' + escapeHtml(track.artist) + '</span>' : '') +
+        (url ? ' <a class="sheet-muted" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" aria-label="Play ' +
+          escapeHtml(track.title) + ' on YouTube">YouTube</a>' : '') + '</div>';
+    }
+
+    function render() {
+      const month = monthName.format(dateAt(period.value + '-01'));
+      $('#month-title').textContent = month;
+      $('#month-title').hidden = false;
+      const services = snapshot.setlists.filter(set => set.date.startsWith(period.value))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const tables = [];
+
+      for (let i = 0; i < services.length; i += 2) {
+        const columns = services.slice(i, i + 2).map(set => ({ date:set.date, rows:numberedRows(set.tracks) }));
+        const lastRow = Math.max(5, ...columns.flatMap(({ rows }) => [...rows.keys()]));
+        const headers = columns.map(({ date, rows }) =>
+          '<th scope="col"><time datetime="' + date + '">' + shortDate.format(dateAt(date)) +
+          '</time>' + (rows.size ? '' : '<div class="sheet-muted">No songs published</div>') + '</th>').join('');
+        const body = Array.from({ length:lastRow }, (_, index) => {
+          const number = index + 1;
+          return '<tr><th scope="row">' + number + '</th>' + columns.map(({ rows }) =>
+            '<td>' + (rows.get(number) ?? []).map(songCell).join('') + '</td>').join('') + '</tr>';
+        }).join('');
+        tables.push('<table class="sheet-table" aria-label="' + month + ' setlists"><thead><tr>' +
+          '<th scope="col">#</th>' + headers + '</tr></thead><tbody>' + body + '</tbody></table>');
+      }
+      $('#sheet-tables').innerHTML = tables.join('');
+    }
+
+    function show(source) {
+      const next = validateSnapshot(source);
+      if (snapshot && Date.parse(snapshot.fetchedAt) >= Date.parse(next.fetchedAt)) return;
+      const previous = period.value;
+      snapshot = next;
+      const months = [...new Set(next.setlists.map(set => set.date.slice(0, 7)))].sort().reverse();
+      const current = todayInZone(config.timeZone).slice(0, 7);
+      period.replaceChildren(...months.map(value => new Option(monthName.format(dateAt(value + '-01')), value)));
+      period.value = months.includes(previous) ? previous : months.find(value => value <= current) ?? months.at(-1);
+      period.disabled = false;
+      render();
+      status.textContent = 'Sheet data from ' + new Intl.DateTimeFormat('en-GB', {
+        dateStyle:'medium', timeStyle:'short', timeZone:config.timeZone,
+      }).format(new Date(next.fetchedAt));
+    }
+
+    async function refresh() {
+      if (busy) return;
+      busy = true;
+      checkedAt = Date.now();
+      const button = $('#refresh');
+      button.disabled = true;
+      button.textContent = 'Refreshing...';
+      try {
+        const latest = await fetchSpreadsheet(config);
+        show(latest);
+        writeCache('sheet', latest);
+      } catch {
+        status.textContent = snapshot ? 'Google Sheets could not be reached. Showing the last import.' :
+          'Google Sheets could not be reached. Try refreshing again.';
+      } finally {
+        busy = false;
+        button.disabled = false;
+        button.textContent = 'Refresh from Sheets';
+      }
+    }
+
+    function check() {
+      if (!document.hidden && readCache('auto-sync', true) !== false &&
+          Date.now() - checkedAt >= 15 * 60 * 1000) void refresh();
+    }
+
+    try { show(readCache('sheet', null)); } catch {}
+    void fetch('./data/songlists.json').then(response => {
+      if (!response.ok) throw new Error();
+      return response.json();
+    }).then(show).catch(() => {
+      if (!snapshot && !busy) status.textContent = 'No sheet data available. Try refreshing.';
+    });
+    period.addEventListener('change', render);
+    $('#refresh').addEventListener('click', refresh);
+    document.addEventListener('visibilitychange', check);
+    window.setInterval(check, 60_000);
+    check();
+  </script>
+</body>
+</html>
