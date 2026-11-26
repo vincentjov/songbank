@@ -5,5 +5,12 @@ export const config = {
   yearTabs: { 2025: '0', 2026: '1604501147', 2027: '139035121' },
   editorEmail: 'editor@songbank.example',
   // Paste the Firebase web app configuration here to enable shared editing.
-  firebase: null,
+  firebase: {
+    apiKey: "AIzaSyDrXmHcjG0jfd2X3uoejlPnt-PbZqtoCQo",
+    authDomain: "worship-song-bank.firebaseapp.com",
+    projectId: "worship-song-bank",
+    storageBucket: "worship-song-bank.firebasestorage.app",
+    messagingSenderId: "189734015268",
+    appId: "1:189734015268:web:d62c2fa4c82170464763b1"
+  },
 };
