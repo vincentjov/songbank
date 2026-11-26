@@ -6,23 +6,32 @@
   <title>Songlist · GMS Europe</title>
   <link rel="stylesheet" href="./assets/styles.css">
   <style>
-    .sheet-toolbar { display:flex; gap:12px 18px; flex-wrap:wrap; align-items:end; justify-content:space-between; margin-bottom:14px }
-    .sheet-toolbar label { display:grid; gap:4px; color:var(--muted); font-size:.9rem; font-weight:650 }
-    .sheet-table { width:100%; margin:0 0 16px; border:1px solid var(--line); border-radius:16px; border-spacing:0; table-layout:fixed; overflow:hidden; background:var(--white) }
-    .sheet-table th,.sheet-table td { text-align:left; vertical-align:top; padding:10px 14px; overflow-wrap:anywhere }
-    .sheet-table th:first-child { width:3.15rem }
-    .sheet-table thead { background:var(--soft) }
+    .songlist .page-heading { padding:32px 0 19px }
+    .songlist .page-heading h1 { font-size:clamp(2.3rem, 4.5vw, 3.25rem) }
+    .sheet-toolbar { display:flex; gap:10px 16px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:8px }
+    .sheet-toolbar label { display:flex; align-items:center; gap:9px; color:var(--muted); font-size:.9rem; font-weight:650 }
+    .sheet-toolbar .select { width:auto }
+    #sheet-status { margin-bottom:19px }
+    #sheet-months { display:grid; gap:24px; padding-bottom:28px }
+    .sheet-month { min-width:0 }
+    .sheet-month h2 { margin-bottom:8px; font-size:1.35rem; letter-spacing:-.033em }
+    .sheet-month-empty { padding:9px 12px; border:1px solid var(--line); border-radius:12px; background:var(--white) }
+    .sheet-scroll { overflow-x:auto; border:1px solid var(--line); border-radius:14px; background:var(--white) }
+    .sheet-table { width:100%; min-width:calc(2.5rem + var(--setlist-count) * 8.75rem); border-spacing:0; table-layout:fixed }
+    .sheet-table th,.sheet-table td { text-align:left; vertical-align:top; padding:7px 10px; overflow-wrap:anywhere }
+    .sheet-table th:first-child { position:sticky; left:0; width:2.5rem; text-align:center; background:var(--soft) }
+    .sheet-table thead { background:var(--soft); font-size:.9rem }
     .sheet-table tbody tr>* { border-top:1px solid var(--line-soft) }
     .sheet-table tr>*+* { border-left:1px solid var(--line-soft) }
-    .sheet-table tbody th,.sheet-muted { color:var(--muted); font-size:.89rem }
-    .sheet-song+.sheet-song { margin-top:7px; padding-top:7px; border-top:1px solid var(--line-soft) }
-    .sheet-song strong { display:block }
-    .sheet-song a { color:var(--accent) }
-    #sheet-status { margin-bottom:14px }
-    #month-title { margin-bottom:12px; font-size:1.5rem; letter-spacing:-.03em }
+    .sheet-table tbody th,.sheet-muted { color:var(--muted); font-size:.83rem }
+    .sheet-song { font-size:.88rem; line-height:1.3 }
+    .sheet-song+.sheet-song { margin-top:5px; padding-top:5px; border-top:1px solid var(--line-soft) }
+    .sheet-song strong { display:block; font-weight:650 }
+    .sheet-song a { color:var(--accent); white-space:nowrap }
     @media (max-width:610px) {
-      .sheet-table th,.sheet-table td { padding:9px 8px }
-      .sheet-table th:first-child { width:2.3rem }
+      .sheet-table th,.sheet-table td { padding:7px 8px }
+      #sheet-months { gap:19px }
+      .songlist .page-heading { padding-top:25px }
     }
   </style>
 </head>
@@ -41,19 +50,16 @@
       </div>
     </div>
   </header>
-  <main class="container" id="main">
+  <main class="container songlist" id="main">
     <div class="page-heading"><h1>Songlist</h1></div>
     <div class="sheet-toolbar">
-      <label for="period">Month
-        <select class="select" id="period" disabled></select>
+      <label for="year">Year
+        <select class="select" id="year" disabled></select>
       </label>
       <button class="button button-outline" id="refresh" type="button">Refresh from Sheets</button>
     </div>
     <p class="sheet-muted" id="sheet-status" role="status">Loading songlists...</p>
-    <section aria-labelledby="month-title">
-      <h2 id="month-title" hidden></h2>
-      <div id="sheet-tables"></div>
-    </section>
+    <div id="sheet-months"></div>
   </main>
   <script type="module">
     import { config } from './config.js';
@@ -63,19 +69,20 @@
 
     const $ = selector => document.querySelector(selector);
     const dateAt = date => new Date(date + 'T00:00:00Z');
-    const monthName = new Intl.DateTimeFormat('en-GB', { month:'long', year:'numeric', timeZone:'UTC' });
+    const monthName = new Intl.DateTimeFormat('en-GB', { month:'long', timeZone:'UTC' });
     const shortDate = new Intl.DateTimeFormat('en-GB', {
-      weekday:'short', day:'numeric', month:'short', year:'numeric', timeZone:'UTC',
+      weekday:'short', day:'numeric', month:'short', timeZone:'UTC',
     });
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char =>
       ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 
-    const period = $('#period');
+    const year = $('#year');
     const status = $('#sheet-status');
     $('#sheet-source').href = config.publishedSheet;
     let snapshot;
     let busy = false;
     let checkedAt = 0;
+    let renderedYear = '';
 
     function numberedRows(tracks) {
       const rows = new Map();
@@ -96,41 +103,50 @@
           escapeHtml(track.title) + ' on YouTube">YouTube</a>' : '') + '</div>';
     }
 
-    function render() {
-      const month = monthName.format(dateAt(period.value + '-01'));
-      $('#month-title').textContent = month;
-      $('#month-title').hidden = false;
-      const services = snapshot.setlists.filter(set => set.date.startsWith(period.value))
-        .sort((a, b) => a.date.localeCompare(b.date));
-      const tables = [];
+    function monthTable(services, heading) {
+      const columns = services.map(set => ({ date:set.date, rows:numberedRows(set.tracks) }));
+      const lastRow = Math.max(5, ...columns.flatMap(({ rows }) => [...rows.keys()]));
+      const headers = columns.map(({ date, rows }) =>
+        '<th scope="col"><time datetime="' + date + '">' + shortDate.format(dateAt(date)) +
+        '</time>' + (rows.size ? '' : '<div class="sheet-muted">No songs published</div>') + '</th>').join('');
+      const body = Array.from({ length:lastRow }, (_, index) => {
+        const number = index + 1;
+        return '<tr><th scope="row">' + number + '</th>' + columns.map(({ rows }) =>
+          '<td>' + (rows.get(number) ?? []).map(songCell).join('') + '</td>').join('') + '</tr>';
+      }).join('');
+      return '<div class="sheet-scroll" tabindex="0" role="region" aria-labelledby="' + heading + '">' +
+        '<table class="sheet-table" style="--setlist-count:' + columns.length +
+        '" aria-labelledby="' + heading + '"><thead><tr><th scope="col">#</th>' + headers +
+        '</tr></thead><tbody>' + body + '</tbody></table></div>';
+    }
 
-      for (let i = 0; i < services.length; i += 2) {
-        const columns = services.slice(i, i + 2).map(set => ({ date:set.date, rows:numberedRows(set.tracks) }));
-        const lastRow = Math.max(5, ...columns.flatMap(({ rows }) => [...rows.keys()]));
-        const headers = columns.map(({ date, rows }) =>
-          '<th scope="col"><time datetime="' + date + '">' + shortDate.format(dateAt(date)) +
-          '</time>' + (rows.size ? '' : '<div class="sheet-muted">No songs published</div>') + '</th>').join('');
-        const body = Array.from({ length:lastRow }, (_, index) => {
-          const number = index + 1;
-          return '<tr><th scope="row">' + number + '</th>' + columns.map(({ rows }) =>
-            '<td>' + (rows.get(number) ?? []).map(songCell).join('') + '</td>').join('') + '</tr>';
-        }).join('');
-        tables.push('<table class="sheet-table" aria-label="' + month + ' setlists"><thead><tr>' +
-          '<th scope="col">#</th>' + headers + '</tr></thead><tbody>' + body + '</tbody></table>');
-      }
-      $('#sheet-tables').innerHTML = tables.join('');
+    function render() {
+      const services = snapshot.setlists.filter(set => set.date.slice(0, 4) === year.value)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const signature = JSON.stringify([year.value, services]);
+      if (signature === renderedYear) return;
+      renderedYear = signature;
+      $('#sheet-months').innerHTML = Array.from({ length:12 }, (_, i) => {
+        const month = year.value + '-' + String(i + 1).padStart(2, '0');
+        const heading = 'month-' + month;
+        const dates = services.filter(set => set.date.startsWith(month));
+        return '<section class="sheet-month"><h2 id="' + heading + '">' +
+          monthName.format(dateAt(month + '-01')) + '</h2>' +
+          (dates.length ? monthTable(dates, heading) :
+            '<p class="sheet-muted sheet-month-empty">No setlists published.</p>') + '</section>';
+      }).join('');
     }
 
     function show(source) {
       const next = validateSnapshot(source);
       if (snapshot && Date.parse(snapshot.fetchedAt) >= Date.parse(next.fetchedAt)) return;
-      const previous = period.value;
+      const previous = year.value;
       snapshot = next;
-      const months = [...new Set(next.setlists.map(set => set.date.slice(0, 7)))].sort().reverse();
-      const current = todayInZone(config.timeZone).slice(0, 7);
-      period.replaceChildren(...months.map(value => new Option(monthName.format(dateAt(value + '-01')), value)));
-      period.value = months.includes(previous) ? previous : months.find(value => value <= current) ?? months.at(-1);
-      period.disabled = false;
+      const years = [...new Set(next.setlists.map(set => set.date.slice(0, 4)))].sort().reverse();
+      const current = todayInZone(config.timeZone).slice(0, 4);
+      year.replaceChildren(...years.map(value => new Option(value, value)));
+      year.value = years.includes(previous) ? previous : years.find(value => value <= current) ?? years.at(-1);
+      year.disabled = false;
       render();
       status.textContent = 'Sheet data from ' + new Intl.DateTimeFormat('en-GB', {
         dateStyle:'medium', timeStyle:'short', timeZone:config.timeZone,
@@ -170,7 +186,7 @@
     }).then(show).catch(() => {
       if (!snapshot && !busy) status.textContent = 'No sheet data available. Try refreshing.';
     });
-    period.addEventListener('change', render);
+    year.addEventListener('change', render);
     $('#refresh').addEventListener('click', refresh);
     document.addEventListener('visibilitychange', check);
     window.setInterval(check, 60_000);
