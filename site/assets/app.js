@@ -1,3 +1,7 @@
+import { applyPsalmnoteTempos } from './psalmnote.js';
+
+let psalmnoteEntries = {};
+
 import { config } from '../config.js';
 import { buildCatalog, filterCatalog, findSongId, foldText, songId, todayInZone, weekWindows } from './catalog.js';
 import { fetchSpreadsheet, validateSnapshot, youtubeVideo } from './sheets.js';
@@ -162,6 +166,7 @@ function renderBank() {
 
 function refreshModel() {
   model = buildCatalog(snapshot, storageState.edits, today);
+  applyPsalmnoteTempos(model.catalog, psalmnoteEntries);
   renderWeeks();
   renderBank();
 }
@@ -216,6 +221,11 @@ const storageDescriptions = {
 };
 
 function renderStorageStatus() {
+  const editing = Boolean(storageState.editing);
+  $('#add-song').hidden = !editing;
+  $('#editor-access').textContent = editing ? 'Lock editing' : 'Unlock editing';
+  $('#editor-access').disabled = !editing && storageState.status !== 'connected';
+  for (const button of drawer.querySelectorAll('[data-action="edit"]')) button.hidden = !editing;
   const labels = {
     unconfigured: 'Editing setup',
     connecting: 'Connecting to team storage',
@@ -229,9 +239,15 @@ function renderStorageStatus() {
   if (drawerState?.kind === 'form') {
     $('#storage-notice').textContent = storageState.status === 'connected' ? '' : storageDescriptions[storageState.status];
     $('#storage-notice').hidden = storageState.status === 'connected';
-    $('#save-song').disabled = storageState.status !== 'connected' || $('#song-form').dataset.saving === 'true';
+    $('#save-song').disabled = !storageState.editing || storageState.status !== 'connected' || $('#song-form').dataset.saving === 'true';
   }
 }
+
+$('#bank-count').insertAdjacentHTML('afterend',
+  '<button type="button" id="editor-access" class="button button-outline" data-action="editor">Unlock editing</button>');
+$('#bank-count').parentElement.appendChild(document.createElement('span')).className = 'topbar-actions';
+const bankActions = $('#bank-count').parentElement.lastElementChild;
+bankActions.append($('#bank-count'), $('#editor-access'));
 
 const storage = createStorage(config, next => {
   const changed = JSON.stringify(next.edits) !== JSON.stringify(storageState.edits);
@@ -268,7 +284,7 @@ function detailsContent(song) {
     </dl>
     <div class="drawer-actions">
       <a class="button button-primary" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">${icon(video.direct ? 'play' : 'search')}${video.direct ? 'Watch on YouTube' : 'Find on YouTube'}</a>
-      <button type="button" class="button button-outline" data-action="edit" data-id="${escapeHtml(song.id)}">Edit song</button>
+      <button type="button" class="button button-outline" data-action="edit" ${storageState.editing ? "" : "hidden"} data-id="${escapeHtml(song.id)}">Edit song</button>
     </div>
     ${scheduled ? `<section class="history-section"><h3>Upcoming setlists</h3><ul>${scheduled}</ul></section>` : ''}
     ${past ? `<section class="history-section"><h3>Play history</h3><ul>${past}</ul></section>` : ''}`);
@@ -297,9 +313,7 @@ function formContent(song) {
     <label>YouTube video link
       <input name="youtube" type="url" inputmode="url" maxlength="500" placeholder="https://youtu.be/…" value="${escapeHtml(song?.youtube)}">
     </label>
-    <label class="password-field">Editor password <span class="required-label">Required</span>
-      <input name="password" type="password" autocomplete="off" required maxlength="200">
-    </label>
+
     <p class="form-notice" id="storage-notice" hidden></p>
     <p class="message-error" id="form-error" role="alert" hidden></p>
     <div class="drawer-actions">
@@ -310,11 +324,24 @@ function formContent(song) {
 }
 
 function openDrawer(kind, id) {
+  if (kind === 'form' && !storageState.editing) return;
   const song = id && model.catalog.get(id);
   if ((kind === 'details' || id) && !song) return;
   if (!drawer.open) returnFocus = document.activeElement;
   drawerState = { kind, song };
   if (kind === 'details') drawerContent.innerHTML = detailsContent(song);
+  if (kind === 'editor') {
+    drawerContent.innerHTML = drawerLayout('Unlock editing', `
+      <form id="editor-form" class="song-form">
+        <label>Editor password
+          <input name="password" type="password" required maxlength="200" autocomplete="off">
+        </label>
+        <p class="message-error" role="alert" hidden></p>
+        <div class="drawer-actions">
+          <button type="submit" class="button button-primary">Unlock editing</button>
+        </div>
+      </form>`);
+  }
   if (kind === 'form') {
     drawerContent.innerHTML = formContent(song);
     renderStorageStatus();
@@ -396,10 +423,10 @@ async function saveSong(form) {
   form.dataset.saving = 'true';
   saveButton.disabled = true;
   saveButton.textContent = 'Saving…';
-  form.elements.password.value = '';
+
   try {
     await storage.save(original ?? { id, sourceTitle: title, sourceArtist: artist, manual: true },
-      fields, String(values.get('password') ?? ''), !original);
+      fields, !original);
     if (drawerState?.kind === 'form' && form.isConnected) closeDrawer();
     announce(original ? 'Song updated.' : 'Song added to the bank.');
   } catch (error) {
@@ -407,7 +434,7 @@ async function saveSong(form) {
     else announce(error.message);
   } finally {
     form.dataset.saving = 'false';
-    saveButton.disabled = storageState.status !== 'connected';
+    saveButton.disabled = !storageState.editing || storageState.status !== 'connected';
     saveButton.textContent = 'Save song';
   }
 }
@@ -441,6 +468,25 @@ drawer.addEventListener('click', event => {
   if (event.target === drawer) closeDrawer();
 });
 drawer.addEventListener('submit', event => {
+  if (event.target.id === 'editor-form') {
+    event.preventDefault();
+    const form = event.target;
+    const button = form.querySelector('button');
+    const error = form.querySelector('[role="alert"]');
+    if (button.disabled) return;
+    const password = form.elements.password.value;
+    form.elements.password.value = '';
+    error.hidden = true;
+    button.disabled = true;
+    void storage.unlock(password).then(() => {
+      if (drawerState?.kind === 'editor' && form.isConnected) closeDrawer();
+      announce('Editing unlocked.');
+    }).catch(reason => {
+      error.textContent = reason.message;
+      error.hidden = false;
+    }).finally(() => { button.disabled = false; });
+    return;
+  }
   if (event.target.id !== 'song-form') return;
   event.preventDefault();
   void saveSong(event.target);
@@ -456,6 +502,13 @@ document.addEventListener('click', event => {
   if (!element) return;
   const { action, id } = element.dataset;
   switch (action) {
+    case 'editor':
+      if (storageState.editing) {
+        void storage.lock().then(() => announce('Editing locked.')).catch(error => announce(error.message));
+      } else {
+        openDrawer('editor');
+      }
+      break;
     case 'add': openDrawer('form'); break;
     case 'edit': openDrawer('form', id); break;
     case 'details': openDrawer('details', id); break;
@@ -512,3 +565,13 @@ void fetch(new URL('../data/songlists.json', import.meta.url))
 void syncSheet();
 window.setInterval(checkDateAndSync, 60_000);
 document.addEventListener('visibilitychange', checkDateAndSync);
+
+void fetch(new URL('../data/psalmnote.json', import.meta.url))
+  .then(response => response.ok ? response.json() : {})
+  .then(entries => {
+    if (entries && typeof entries === 'object') {
+      psalmnoteEntries = entries;
+      refreshModel();
+    }
+  })
+  .catch(() => {});
